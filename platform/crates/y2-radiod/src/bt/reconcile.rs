@@ -200,6 +200,7 @@ impl Controller {
     pub(super) fn reconcile(&mut self, now: Instant) {
         if self.world.bluez.is_some() {
             self.register_agent();
+            self.register_hfp();
         }
         self.reconcile_power(now);
         self.reconcile_sleep(now);
@@ -468,6 +469,7 @@ impl Controller {
             Rung::BluezRestart => {
                 if let Some(bus) = self.bus.as_mut() {
                     bus.agent_owner = None;
+                    bus.profile_owner = None;
                 }
                 self.supervise.restart_bluez();
             }

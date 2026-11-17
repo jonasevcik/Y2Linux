@@ -35,6 +35,8 @@ pub enum Kind {
     Quiet,
     /// The A2DP profile for a connected headset without a stream.
     Profile,
+    /// Registering the Hands-Free battery profile with BlueZ.
+    HfpProfile,
 }
 
 pub struct Call {
@@ -49,6 +51,8 @@ pub struct Bus {
     pub channel: Channel,
     pub calls: HashMap<u32, Call>,
     pub agent_owner: Option<String>,
+    /// The BlueZ the headphone-battery profile is registered with (`hfp::Controller::register_hfp`).
+    pub profile_owner: Option<String>,
 }
 
 const MATCHES: [&str; 6] = [
@@ -101,6 +105,7 @@ impl Bus {
             channel,
             calls: HashMap::new(),
             agent_owner: None,
+            profile_owner: None,
         })
     }
 
@@ -246,6 +251,9 @@ impl Controller {
     fn message(&mut self, message: Message) {
         match message.msg_type() {
             MessageType::Signal => self.signal(&message),
+            MessageType::MethodCall if message.path().is_some_and(|p| &*p == super::hfp::PATH) => {
+                self.hfp_call(message)
+            }
             MessageType::MethodCall => self.agent_call(message),
             MessageType::MethodReturn | MessageType::Error => self.reply(message),
         }

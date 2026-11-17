@@ -78,6 +78,10 @@ impl Controller {
             volume: dev.volume,
             transport: dev.transport.clone(),
             ended: record.and_then(|r| r.ended),
+            battery: dev
+                .connected
+                .then(|| self.hfp.battery.get(&dev.address).map(|r| r.percent))
+                .flatten(),
         }
     }
 

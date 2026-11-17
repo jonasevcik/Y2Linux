@@ -324,6 +324,7 @@ impl Controller {
         crate::wifi::recover_if_failed(&self.root);
         if let Some(bus) = self.bus.as_mut() {
             bus.agent_owner = None;
+            bus.profile_owner = None;
         }
         self.supervise.restart_bluealsa();
         self.supervise.restart_bluez();

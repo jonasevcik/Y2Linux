@@ -26,8 +26,9 @@ flate2 = { version = "=1.1.5", default-features = false, features = ["rust_backe
 tar = { version = "=0.4.44", default-features = false }
 sha2 = { version = "=0.10.9", default-features = false }
 hmac = "=0.12.1"
-# y2-radiod talks to BlueZ and BlueALSA over the system D-Bus (libdbus), as Reborn did.
-dbus = "=0.9.9"
+# y2-radiod talks to BlueZ and BlueALSA over the system D-Bus (libdbus), as Reborn did. stdfd: a file
+# descriptor BlueZ passes (the Hands-Free link) arrives as std's OwnedFd, so no unsafe is needed to use it.
+dbus = { version = "=0.9.9", features = ["stdfd"] }
 
 [profile.release]
 opt-level = "s"

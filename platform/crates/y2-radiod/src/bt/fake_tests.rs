@@ -76,6 +76,8 @@ struct Fake {
     /// Who registered the pairing agent, and the agent's answer to AuthorizeService.
     agent: Option<String>,
     authorized: Option<bool>,
+    /// Who registered the Hands-Free profile, and the UUID it asked for.
+    profile: Option<(String, String)>,
 }
 
 fn variant<T: RefArg + 'static>(value: T) -> Variant<Box<dyn RefArg>> {
@@ -218,6 +220,12 @@ fn answer(fake: &Mutex<Fake>, message: &Message, connection: &Connection) -> Mes
             fake.agent = message.sender().map(|s| s.to_string());
             message.method_return()
         }
+        "RegisterProfile" => {
+            let (_, uuid, _): (DbusPath, String, PropMap) =
+                message.read3().expect("RegisterProfile arguments");
+            fake.profile = message.sender().map(|s| (s.to_string(), uuid));
+            message.method_return()
+        }
         "ConnectProfile" => {
             fake.connects += 1;
             if fake.in_progress_first && fake.connects == 1 {
@@ -300,6 +308,8 @@ enum Control {
     Bond,
     /// The car opens its audio: BlueZ asks the agent (from another thread, as BlueZ waits).
     Authorize(String),
+    /// The headset opens its Hands-Free link: BlueZ hands this end to the profile.
+    HandsFree(std::os::fd::OwnedFd),
 }
 
 fn act(fake: &Arc<Mutex<Fake>>, control: Control, connection: &Connection) {
@@ -321,6 +331,25 @@ fn act(fake: &Arc<Mutex<Fake>>, control: Control, connection: &Connection) {
             .expect("call")
             .append2(DbusPath::from(DEVICE), 123_456u32);
             let _ = connection.send(question);
+            return;
+        }
+        Control::HandsFree(fd) => {
+            let owner = fake
+                .lock()
+                .expect("fake")
+                .profile
+                .clone()
+                .expect("profile registered")
+                .0;
+            let call = Message::new_method_call(
+                owner,
+                super::hfp::PATH,
+                "org.bluez.Profile1",
+                "NewConnection",
+            )
+            .expect("call")
+            .append3(DbusPath::from(DEVICE), fd, PropMap::new());
+            let _ = connection.send(call);
             return;
         }
         Control::Bond => fake.lock().expect("fake").paired = true,
@@ -922,6 +951,84 @@ fn a_car_pairs_from_its_side() {
         .expect("the car is used for audio");
 }
 
+/// What the headset's end of a Hands-Free link reads after `lines`, until `ends` shows.
+fn hands_free(peer: &mut std::os::unix::net::UnixStream, lines: &str, ends: &str) -> String {
+    use std::io::{Read, Write};
+    peer.write_all(lines.as_bytes()).expect("headset writes");
+    peer.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("timeout");
+    let mut text = String::new();
+    let mut chunk = [0u8; 512];
+    while !text.ends_with(ends) {
+        match peer.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => text.push_str(&String::from_utf8_lossy(&chunk[..count])),
+        }
+    }
+    text
+}
+
+/// The headset's battery: a Hands-Free link answered as a gateway, the level shown with the connected
+/// headset and gone with the link, and nothing there that starts a call or a sound.
+fn a_headset_reports_its_battery_over_hands_free() {
+    let Some(h) = Harness::start("battery", Fake::default()) else {
+        return;
+    };
+    let registered = fake_until(&h, Duration::from_secs(5), |f| f.profile.is_some())
+        .expect("the profile is registered");
+    assert_eq!(
+        registered.profile.expect("profile").1,
+        "0000111f-0000-1000-8000-00805f9b34fb",
+        "the audio gateway role"
+    );
+    h.link(LONG, Link::Ready).expect("headset ready");
+    let (ours, mut headset) = std::os::unix::net::UnixStream::pair().expect("pair");
+    let _ = h.control.send(Control::HandsFree(ours.into()));
+    let set_up = hands_free(&mut headset, "AT+BRSF=1008\r\n", "OK\r\n");
+    assert!(set_up.contains("+BRSF: 256"), "{set_up:?}");
+    // One command at a time: a read ends at the first OK, so two sent together would leak the second
+    // answer into the next read.
+    let listed = hands_free(&mut headset, "AT+BIND=1,2\r\n", "OK\r\n");
+    assert_eq!(listed, "\r\nOK\r\n");
+    let indicators = hands_free(&mut headset, "AT+BIND?\r\n", "OK\r\n");
+    assert!(indicators.contains("+BIND: 2,1"), "{indicators:?}");
+    assert!(
+        h.until(Duration::from_secs(1), |s| s
+            .devices
+            .iter()
+            .any(|d| d.battery.is_some()))
+            .is_none(),
+        "no level before the headset sends one"
+    );
+    let answer = hands_free(&mut headset, "AT+BIEV=2,80\r\n", "OK\r\n");
+    assert_eq!(answer, "\r\nOK\r\n");
+    let shown = h
+        .until(Duration::from_secs(5), |s| {
+            s.devices.iter().any(|d| d.battery == Some(80))
+        })
+        .expect("the level is published");
+    assert!(shown.devices[0].connected);
+    // A call or a sound is refused, whatever the headset asks.
+    for line in ["ATA\r", "ATD123;\r", "AT+BCC\r", "AT+BCS=2\r"] {
+        let refused = hands_free(&mut headset, line, "ERROR\r\n");
+        assert_eq!(refused, "\r\nERROR\r\n", "{line}");
+    }
+    let changed = hands_free(&mut headset, "AT+BIEV=2,79\r\n", "OK\r\n");
+    assert_eq!(changed, "\r\nOK\r\n");
+    h.until(Duration::from_secs(5), |s| {
+        s.devices.iter().any(|d| d.battery == Some(79))
+    })
+    .expect("the level tracks");
+    // The link ends with the headset: the level goes, the audio link is untouched.
+    drop(headset);
+    let gone = h
+        .until(Duration::from_secs(5), |s| {
+            s.devices.iter().all(|d| d.battery.is_none())
+        })
+        .expect("no level after the link ended");
+    assert_eq!(gone.devices[0].link, Link::Ready, "A2DP is unaffected");
+}
+
 #[test]
 fn field_failures_against_a_fake_bluez() {
     if private_bus().is_none() {
@@ -939,4 +1046,5 @@ fn field_failures_against_a_fake_bluez() {
     codec_reload_reconnects_cleanly();
     quick_drops_park_the_headset();
     a_car_pairs_from_its_side();
+    a_headset_reports_its_battery_over_hands_free();
 }

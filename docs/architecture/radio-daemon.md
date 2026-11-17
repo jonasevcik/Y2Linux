@@ -74,6 +74,21 @@ changes while one is open.
   `AuthorizeService` is answered without a second question, and once BlueZ bonded it the daemon
   trusts it, hides the player again and uses it for audio like headphones paired here
   (`adopt_welcomed`). Bluetooth off, a sleep or a pairing of our own end the visibility early.
+- **Headphone battery** (`bt/hfp.rs`, `bt/hfp_at.rs`): the player registers a Hands-Free *audio gateway* profile
+  (UUID 0x111F, `ProfileManager1.RegisterProfile` at `/org/y2/hfp`) next to bluealsa's A2DP source. Headsets open a
+  Hands-Free link right after they connect and tell that gateway their battery level; before this nothing answered,
+  so the level never arrived (a Mac got the Niceboy Beans 4's level 88 ms after the link came up). The link is a text
+  channel (RFCOMM) on the ACL link A2DP already uses; **no call and no sound ever starts there**: BRSF claims only
+  hands-free indicators, `ATA`/`ATD`/`AT+BCC`/`AT+BCS` are answered ERROR, SCO is never opened. One thread per link
+  (`Worker`, 64 KiB stack, at most 4 links) reads, answers and reports to the controller through one channel; a link
+  that ends, floods (>200 lines in 10 s) or outlives its device (10 s after BlueZ shows it disconnected) is only
+  closed, and nothing in it touches the connect ladder. The level comes from `AT+BIEV=2,n` (0–100), Apple's
+  `AT+XAPL` + `AT+IPHONEACCEV=n,1,v` (0–9, steps of 10 %) or Plantronics' `AT+XEVENT=BATTERY,level,top`
+  (`AT+CSRBATT` is answered and not read: its scale is unverified). It is published as `Device.battery` while the
+  headset is connected and gone with the link; BlueZ's experimental `Battery1` provider is not used, so
+  `--experimental` stays off. Journal: `hfp_at` (every line), `hfp_link`, `headphone_battery`. Kill switch:
+  `"headphone_battery": false` in `/data/bluetooth/radiod.json` (default true) never registers the profile.
+  Not yet measured on a player: that BlueZ's own outgoing Hands-Free connect leaves the A2DP connect time unchanged.
 
 ## Records
 

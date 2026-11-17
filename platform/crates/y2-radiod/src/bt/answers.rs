@@ -18,7 +18,7 @@ impl Controller {
         match call.kind {
             Kind::Power(on) => self.powered(on, answer),
             Kind::Connect(address) => self.connect_answer(&address, answer),
-            Kind::Cancel(_) | Kind::Volume | Kind::Quiet | Kind::Profile => {}
+            Kind::Cancel(_) | Kind::Volume | Kind::Quiet | Kind::Profile | Kind::HfpProfile => {}
             Kind::Disconnect(address) => {
                 if answer.is_err() {
                     let message = "Couldn't disconnect. Try again.";
@@ -225,6 +225,7 @@ fn label(kind: &Kind) -> &'static str {
         Kind::Volume => "volume",
         Kind::Quiet => "quiet",
         Kind::Profile => "a2dp_profile",
+        Kind::HfpProfile => "hfp_profile",
         Kind::Remove(_) => "remove",
     }
 }

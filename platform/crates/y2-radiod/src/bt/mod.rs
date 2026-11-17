@@ -8,6 +8,8 @@ mod agent;
 mod answers;
 mod bus;
 mod codec;
+mod hfp;
+mod hfp_at;
 mod ladder;
 mod links;
 mod publish;
@@ -19,6 +21,8 @@ mod world;
 
 #[cfg(test)]
 mod fake_tests;
+#[cfg(test)]
+mod hfp_at_tests;
 
 use crate::{
     arbiter::Event,
@@ -179,6 +183,7 @@ pub struct Controller {
     discovery: Option<Discovery>,
     scan: Scan,
     pairing: agent::Agent,
+    hfp: hfp::Hfp,
     codec: settle::Codecs,
     ladder: ladder::Ladder,
     supervise: supervise::Supervise,
@@ -230,6 +235,7 @@ impl Controller {
             discovery: None,
             scan: Scan::Idle,
             pairing: agent::Agent::default(),
+            hfp: hfp::Hfp::default(),
             codec: settle::Codecs::default(),
             ladder: ladder::Ladder::default(),
             failure: None,
@@ -249,6 +255,7 @@ impl Controller {
             self.supervise.check(now);
             self.connect_bus(now);
             self.drain_bus();
+            self.drain_hfp(now);
             if !self.drain_orders() {
                 return;
             }

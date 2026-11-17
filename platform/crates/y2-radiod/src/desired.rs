@@ -30,6 +30,14 @@ pub struct Policy {
     /// Devices that connect only when asked (Y2Reborn #78).
     #[serde(default)]
     pub manual: BTreeSet<String>,
+    /// Listen on a Hands-Free link for the headset's battery level; `false` leaves that profile
+    /// unregistered (the switch if a headset ever misbehaves with it).
+    #[serde(default = "on")]
+    pub headphone_battery: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 impl Default for Policy {
@@ -38,6 +46,7 @@ impl Default for Policy {
             schema: 1,
             preference: "Auto".into(),
             manual: BTreeSet::new(),
+            headphone_battery: true,
         }
     }
 }

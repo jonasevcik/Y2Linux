@@ -1,0 +1,10 @@
+#!/bin/sh
+# schedutil re-evaluates the frequency every 900 us by default (1.5 x the OPP latency): about 300 frequency changes
+# and wakeups a second while music plays on a load of 0.14 cores. 25 ms is plenty for audio, and the workload leases
+# (Interactive, ArtworkDecode) still raise the clock at once when someone uses the player.
+RATE=/sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us
+case "$1" in
+ start) [ -w "$RATE" ] && echo 25000 > "$RATE"; exit 0 ;;
+ stop) exit 0 ;;
+ *) exit 2 ;;
+esac

@@ -1,6 +1,8 @@
 """Dark playback and the core-parking coordinator. Synthetic evidence, never a device receipt."""
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import unittest
 from test_audio import function
 from test_cpu_fix02 import COORDINATOR
@@ -98,6 +100,40 @@ int main(void){
         self.assertIn('y2_playback_is_soft(name) && y2_backlight_dark()', write)
         self.assertLess(write.index('renewal'), write.index('y2_system_idle_restore()'))
         self.assertTrue(re.search(r'y2_workload_live\(false\)', workload) and re.search(r'y2_workload_live\(true\)', workload))
+
+
+class FrequencyRateLimit(unittest.TestCase):
+    """S06y2-cpufreq runs for real against a scratch /sys tree."""
+    SCRIPT = ROOT / 'buildroot/board/y2/production-overlay/etc/init.d/S06y2-cpufreq'
+
+    def run_script(self, action, rate):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tunable = root / 'sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us'
+            if rate is not None:
+                tunable.parent.mkdir(parents=True)
+                tunable.write_text(rate)
+            script = root / 'S06y2-cpufreq'
+            script.write_text(self.SCRIPT.read_text().replace('/sys/devices', str(root) + '/sys/devices'))
+            done = subprocess.run(['sh', str(script), action], capture_output=True, text=True)
+            return done, tunable.read_text() if rate is not None else None
+
+    def test_boot_slows_schedutil_to_25_ms(self):
+        done, value = self.run_script('start', '900\n')
+        self.assertEqual((done.returncode, done.stdout, done.stderr, value.strip()), (0, '', '', '25000'))
+
+    def test_a_kernel_without_the_tunable_is_not_a_boot_failure(self):
+        done, _ = self.run_script('start', None)
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, '', ''))
+
+    def test_stop_leaves_the_setting_and_unknown_actions_fail(self):
+        done, value = self.run_script('stop', '25000\n')
+        self.assertEqual((done.returncode, value.strip()), (0, '25000'))
+        self.assertEqual(self.run_script('restart', '900\n')[0].returncode, 2)
+
+    def test_the_default_it_replaces_is_the_measured_one(self):
+        self.assertIn('every 900 us', self.SCRIPT.read_text())
+        self.assertIn('echo 25000 >', self.SCRIPT.read_text())
 
 
 if __name__ == '__main__':
